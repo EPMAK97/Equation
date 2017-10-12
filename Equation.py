@@ -3,7 +3,7 @@ import numpy
 from numpy import log10, sqrt, power
 
 from decimal import *
-getcontext().prec = 100
+getcontext().prec = 30
 
 E = Decimal(0.000001)
 
@@ -29,21 +29,18 @@ LAMBDA_RIGHT_BOUND = Decimal(1.0)
 
 def left_log(x):
     x = Decimal(x)
-    #return math.pow(((2.8 * V_por) / (v_n * sqrt(x))), (1000 * CC / 5.75))
     tmp1 = ((Decimal(2.8) * Decimal(power(V_por, Decimal(2.0)))) / (v_n * Decimal(sqrt(x))));
     tmp2 = (Decimal(1000) * CC / Decimal(5.75));
     return Decimal(power(tmp1, tmp2))
 
 def right_log(x):
-    return Decimal(2.51) / (Re * Decimal(sqrt(x))) + eps / Decimal(3.701)
+    return Decimal(2.51) / (Re * Decimal(sqrt(x))) + eps / (Decimal(3.7) * d)
 
 def right_side(x):
     return Decimal(-2.0) * Decimal(log10(left_log(x) * right_log(x)))
-    #return math.pow(left_log(x) * right_log(x), -2.0)
 
 def left_side(x):
     return Decimal(1) / Decimal(sqrt(x))
-    #return math.pow(10.0, 1 / sqrt(x));
 
 def brute_force_lambda():
     min_diff = 1e10
@@ -61,12 +58,10 @@ def bin_search_lambda():
     coeffR = right_side(R) - left_side(R)
     iterations = 0
 
-    print("in binsearch")
     if coeff * coeffR < 0:
-    	print("normal binsearch")
+    	print("using binsearch")
     else:
     	print("can't use binsearch!!! using brute force")
-    	#return 1.0
     	return brute_force_lambda()
 
     while iterations < 100 and abs(L - R) > 1e-10:
@@ -93,17 +88,13 @@ CC_array = []
 lambda_array = []
 
 def main():
-    global CC, v_n
+    global CC, v_n, Re
     for CC in numpy.arange(C_LEFT_BOUND, C_RIGHT_BOUND, C_STEP):
         print(CC)
-        v_n = (1 - CC) * v_n + 1 * CC * v_p
+        v_n = (1 - CC) * v_n + 3 * CC * v_p
+        #Re = Decimal(4.0) * Q / (Decimal(numpy.pi) * d * v_n)
         CC_array.append(CC)
-        #bfl = brute_force_lambda()
-        bsl = bin_search_lambda()
-        #if abs(bfl - bsl) > 1e-2:
-        lambda_array.append(bsl)
-        #lambda_array.append(bfl)
-        #lambda_array.append(brute_force_lambda())
+        lambda_array.append(bin_search_lambda())
 
     print_critical_point()
     plt.plot(CC_array, lambda_array, marker='o', ls='-')
@@ -119,19 +110,10 @@ def print_critical_point():
 
     for i in range(len(lambda_array)):
         if lambda_array[i] < lambda_array[0]:
-            #print('first lambda = {0}'.format(lambda_array[0]))
+            print('first lambda = {0}'.format(lambda_array[0]))
             print('first concentration with lambda less then start_lambda = {0}'.format(CC_array[i]))
             return
 
     print('there is no lambda less then start_lambda')
 
 main()
-
-
-# 1/x+2*log10[ ((2.8*0.05)/(1.58975e-05* sqrt[x]))^(0.2/5.75) * (2.51/(136034.965417*sqrt[x])+0.0001/3.701)]
-
-# 1/x + 2*math.log10(math.pow(((2.8 * V_por) / (v_n * math.sqrt(x))), 1000 * CC) * math.log10(2.51 / (Re * math.sqrt(x)) + eps / 3.701))
-
-# -2.0 * math.log10(math.pow(((2.8 * V_por) / (v_n * math.sqrt(x))), 1000 * CC) * math.log10(2.51 / (Re * math.sqrt(x)) + eps / 3.701))
-
-# gnu multiplay precision
