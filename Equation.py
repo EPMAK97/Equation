@@ -211,7 +211,7 @@ class Example(QWidget):
 
         self.leC_LEFT_BOUND = QLineEdit(self)
         self.leC_LEFT_BOUND.move(130, 162)
-        self.leC_LEFT_BOUND.setText('0.005')
+        self.leC_LEFT_BOUND.setText('0.0')
 
         self.leC_RIGHT_BOUND = QLineEdit(self)
         self.leC_RIGHT_BOUND.move(130, 182)
