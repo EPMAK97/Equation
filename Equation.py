@@ -3,23 +3,38 @@ import numpy
 from numpy import log10, sqrt, power
 
 from decimal import *
-getcontext().prec = 30
+getcontext().prec = 50
 
-E = Decimal(0.000001)
+# коэффициент при смешивании нефти и полимера
+coeffMixture = Decimal(1)
 
+# объемная скорость потока, м^3 / с
 Q = Decimal(1.425)
+
+# диаметр трубы, м
 d = Decimal(1.067)
+
+# КИНЕМАТИЧЕСКАЯ вязкость нефти, м^2 / с
 v_n0 = Decimal(0.0000125)
 v_n = v_n0
+
+# КИНЕМАТИЧЕСКАЯ вязкость присадок, м^2 / с
 v_p = Decimal(0.0017)
 
+# какой-то епсилон, м
 eps = Decimal(0.0001)
+
+# пороговая скорость, м / с
 V_por = Decimal(0.05)
 
-Re = Decimal(4.0) * Q / (Decimal(numpy.pi) * d * v_n)
+# средняя скорость движения жидкости в трубе, м / с
+V = Decimal(4.0) * Q / (Decimal(numpy.pi) * d * d)
 
-C_LEFT_BOUND = Decimal(0.005)
-C_RIGHT_BOUND = Decimal(0.012)
+# число Рейндольса, безразмерное
+Re = V * d / v_n
+
+C_LEFT_BOUND = Decimal(0.000)
+C_RIGHT_BOUND = Decimal(0.015)
 C_STEP = Decimal(0.0001)
 CC = C_STEP
 
@@ -29,7 +44,7 @@ LAMBDA_RIGHT_BOUND = Decimal(1.0)
 
 def left_log(x):
     x = Decimal(x)
-    tmp1 = ((Decimal(2.8) * Decimal(power(V_por, Decimal(2.0)))) / (v_n * Decimal(sqrt(x))));
+    tmp1 = (Decimal(2.8) * V_por) / (V * Decimal(sqrt(x)));
     tmp2 = (Decimal(1000) * CC / Decimal(5.75));
     return Decimal(power(tmp1, tmp2))
 
@@ -59,9 +74,10 @@ def bin_search_lambda():
     iterations = 0
 
     if coeff * coeffR < 0:
-    	print("using binsearch")
+    	1
+    	#print("using binsearch")
     else:
-    	print("can't use binsearch!!! using brute force")
+    	#print("can't use binsearch!!! using brute force")
     	return brute_force_lambda()
 
     while iterations < 100 and abs(L - R) > 1e-10:
@@ -80,9 +96,7 @@ def bin_search_lambda():
                 R = mid
             else:
                 L = mid
-
     return L
-
 
 CC_array = []
 lambda_array = []
@@ -91,22 +105,22 @@ def main():
     global CC, v_n, Re
     for CC in numpy.arange(C_LEFT_BOUND, C_RIGHT_BOUND, C_STEP):
         print(CC)
-        v_n = (1 - CC) * v_n + 3 * CC * v_p
-        #Re = Decimal(4.0) * Q / (Decimal(numpy.pi) * d * v_n)
+        v_n = (1 - CC / 100) * v_n + coeffMixture * CC / 100 * v_p
+        Re = V * d / v_n
         CC_array.append(CC)
         lambda_array.append(bin_search_lambda())
 
     print_critical_point()
     plt.plot(CC_array, lambda_array, marker='o', ls='-')
-    plt.xlabel('Bulk polymer concentration')
-    plt.ylabel('Friction coeffitient')
+    plt.xlabel('Объемная концентрация полимера')
+    plt.ylabel('Коэффициент трения')
     plt.show()
-
 
 def print_critical_point():
     cidx = numpy.array(lambda_array).argmax()
     print('lambda_critical = {0}'.format(lambda_array[cidx]))
-    print('c_critical = {0}'.format(CC_array[cidx]));
+    print('c_critical = {0}'.format(CC_array[cidx]))
+    print('Re = {0}'.format(Re))
 
     for i in range(len(lambda_array)):
         if lambda_array[i] < lambda_array[0]:
