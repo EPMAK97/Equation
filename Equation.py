@@ -1,281 +1,337 @@
-import numpy
+# necessary in order to compile this script to .exe
+from matplotlib import use as matplotlib_use
+matplotlib_use("QT5Agg")
+
 import sys
-from numpy import log10, sqrt, power
-from matplotlib import pyplot as plt
-from decimal import *
+import numpy
+import decimal
+from numpy import log10, sqrt, power, exp, log
+from decimal import Decimal
+
 from PyQt5.QtWidgets import *
+from PyQt5.QtGui import QFont
 
-getcontext().prec = 30
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+from matplotlib import pyplot as plt
+from matplotlib.figure import Figure
 
-# коэффициент при смешивании нефти и полимера
-coeffMixture = Decimal(1)
+decimal.getcontext().prec = 100
 
-# объемная скорость потока, м^3 / с
-Q = Decimal(1.425)
+class InputField:
+    def __init__(self, text, coeffSI, left_bound = None, right_bound = None):
+        self.text = text
+        self.coeffSI = Decimal(coeffSI)
+        self.left_bound = left_bound
+        self.right_bound = right_bound
 
-# диаметр трубы, м
-d = Decimal(1.067)
+inputFields = {
+    'Epsilon' : InputField('Шероховатость трубопровода, мм', 1e-3, 0.001, 10),
+    'Q' : InputField('Объемная скорость потока, м^3 / c', 1.0, 0.001, 1000),
+    'd' : InputField('Диаметр трубы, мм', 1e-3, 1, 2000),
+    'v_n' : InputField('Вязкость нефти, сСт', 1e-6),
 
-# КИНЕМАТИЧЕСКАЯ вязкость нефти, м^2 / с
-v_n0 = Decimal(0.0000125)
-v_n = v_n0
+    'v_p' : InputField('Вязкость присадки, сСт', 1e-6),
+    'V_por' : InputField('Пороговая скорость, м / с', 1.0, 0.001, 0.3),
 
-# КИНЕМАТИЧЕСКАЯ вязкость присадок, м^2 / с
-v_p = Decimal(0.0017)
+    'c_left_bound' : InputField('Начальная концентрация, ppm', 1e-6, 0, 350),
+    'c_right_bound' : InputField('Конечная концентрация, ppm', 1e-6, 0, 350),
+    'c_points_count' : InputField('Количество точек построения', 1.0, 3, 1000),
 
-# какой-то епсилон, м
-eps = Decimal(0.0001)
+    'concentration_coefficient' : InputField('Коэффициент Z', 1.0, 0.0, 2e5),
+}
 
-# пороговая скорость, м / с
-V_por = Decimal(0.05)
+class Equation:
 
-# средняя скорость движения жидкости в трубе, м / с
-V = Decimal(4.0) * Q / (Decimal(numpy.pi) * d * d)
+    def __init__(self):
+        self.Epsilon = 0
+        self.Q = 0
+        self.d = 0
+        self.v_n = 0
 
-# число Рейндольса, безразмерное
-Re = V * d / v_n
+        self.v_p = 0
+        self.V_por = 0
 
-C_LEFT_BOUND = Decimal(0.000)
-C_RIGHT_BOUND = Decimal(0.015)
-C_STEP = Decimal(0.0001)
-CC = C_STEP
+        self.c_left_bound = 0
+        self.c_right_bound = 0
+        self.c_points_count = 0
 
-LAMBDA_STEP = Decimal(0.001)
-LAMBDA_LEFT_BOUND = Decimal(LAMBDA_STEP)
-LAMBDA_RIGHT_BOUND = Decimal(1.0)
+        self.lambda_left_bound = Decimal(1e-20)
+        self.lambda_right_bound = Decimal(1)
+        self.lambda_bruteforce_step = Decimal(1e-3)
 
-def left_log(x):
-    x = Decimal(x)
-    tmp1 = (Decimal(2.8) * V_por) / (V * Decimal(sqrt(x)));
-    tmp2 = (Decimal(1000) * CC / Decimal(5.75));
-    return Decimal(power(tmp1, tmp2))
+        self.bin_search_max_operations = 100
+        self.bin_search_precision = Decimal(1e-8)
 
-def right_log(x):
-    return Decimal(2.51) / (Re * Decimal(sqrt(x))) + eps / (Decimal(3.7) * d)
+    def outOfBounds(self, value, field):
+        conditionLeft = conditionRight = False
+        if (field.left_bound):
+            left_bound = Decimal(field.left_bound)
+            conditionLeft = value < left_bound and abs(value - left_bound) > 1e-10
 
-def right_side(x):
-    return Decimal(-2.0) * Decimal(log10(left_log(x) * right_log(x)))
+        if (field.right_bound):
+            right_bound = Decimal(field.right_bound)
+            conditionRight = value > right_bound and abs(value - right_bound) > 1e-10
 
-def left_side(x):
-    return Decimal(1) / Decimal(sqrt(x))
+        return conditionLeft or conditionRight
 
-def brute_force_lambda():
-    min_diff = 1e10
-    min_lambda = -1;
-    for i in numpy.arange(LAMBDA_LEFT_BOUND, LAMBDA_RIGHT_BOUND, LAMBDA_STEP):
-        cur_diff = abs(left_side(i) - right_side(i))
-        if (min_diff > cur_diff):
-            min_diff = cur_diff
-            min_lambda = i
-    return min_lambda
+    def setData(self, name, textValue):
+        try:
+            field = inputFields[name]
+            assert(field)
+            value = Decimal(textValue.replace(',', '.'))
+            if self.outOfBounds(value, field):
+                raise ValueError()
+            setattr(self, name, value * field.coeffSI)
 
-def bin_search_lambda():
-    L, R = LAMBDA_STEP, LAMBDA_RIGHT_BOUND
-    coeff = right_side(L) - left_side(L)
-    coeffR = right_side(R) - left_side(R)
-    iterations = 0
+        except AssertionError:
+            raise Exception('Wrong field "{0}" in function Equation.setData() \n Сообщите программистам об ошибке'.format(name))
+        except decimal.InvalidOperation:
+            raise Exception('Некорректные данные в поле "{0}" \n' \
+                'Допускаются цифры и точка либо запятая в качестве разделителя'.format(field.text))
+        except ValueError:
+            raise Exception('Значение в поле "{0}" должно лежать в пределах от {1} до {2}'.format(field.text, field.left_bound, field.right_bound))
 
-    if coeff * coeffR < 0:
-    	1
-    	#print("using binsearch")
-    else:
-    	#print("can't use binsearch!!! using brute force")
-    	return brute_force_lambda()
+    def left_log(self, x):
+        x = Decimal(x)
+        base = (Decimal(2.8) * self.V_por) / (self.V * Decimal(sqrt(x)))
+        p = self.beta / Decimal(5.75)
+        return Decimal(power(base, p))
 
-    while iterations < 100 and abs(L - R) > 1e-10:
-        iterations += 1
-        mid = (L + R) / Decimal(2.0);
+    def right_log(self, x):
+        return Decimal(2.51) / (self.Re * Decimal(sqrt(x))) + self.Epsilon / (Decimal(3.7) * self.d)
 
-        if coeff > 0:
-            #print('coeff greater')
-            if left_side(mid) - right_side(mid) > 0.0:
-                R = mid
+    def right_side(self, x):
+        return Decimal(-2.0) * Decimal(log10(self.left_log(x) * self.right_log(x)))
+
+    def left_side(self, x):
+        return Decimal(1) / Decimal(sqrt(x))
+
+    def brute_force_lambda(self):
+        min_diff = 1e10
+        min_lambda = -1;
+        for i in numpy.arange(self.lambda_left_bound, self.lambda_right_bound, self.lambda_bruteforce_step):
+            cur_diff = abs(self.left_side(i) - self.right_side(i))
+            if (min_diff > cur_diff):
+                min_diff = cur_diff
+                min_lambda = i
+        return min_lambda
+
+    def bin_search_lambda(self):
+        L, R = self.lambda_left_bound, self.lambda_right_bound
+        coeffL = self.left_side(L) - self.right_side(L)
+        coeffR = self.left_side(R) - self.right_side(R)
+
+        coeffL /= abs(coeffL)
+        coeffR /= abs(coeffR)
+        iterations = 0
+
+        if coeffL * coeffR > 0:
+        	return self.brute_force_lambda()
+
+        while iterations < self.bin_search_max_operations and abs(L - R) > self.bin_search_precision:
+            iterations += 1
+            mid = (L + R) / Decimal(2.0);
+
+            if coeffL * (self.left_side(mid) - self.right_side(mid)) > 0.0:
+            	L = mid
             else:
-                L = mid
-        else:
-            #print('coeff less')
-            if left_side(mid) - right_side(mid) < 0.0:
-                R = mid
-            else:
-                L = mid
-    return L
+            	R = mid
 
-def main():
-    global CC, v_n, Re
-    CC_array = []
-    lambda_array = []
-    for CC in numpy.arange(C_LEFT_BOUND, C_RIGHT_BOUND, C_STEP):
-        print(CC)
-        v_n = (1 - CC / Decimal(100)) * v_n + coeffMixture * CC / Decimal(100) * v_p
-        Re = V * d / v_n
-        CC_array.append(CC)
-        lambda_array.append(bin_search_lambda())
+        return L
 
-    #print_critical_point()
-    plt.plot(CC_array, lambda_array, marker='o', ls='-')
-    plt.xlabel('Объемная концентрация полимера')
-    plt.ylabel('Коэффициент трения')
-    plt.show()
+    def showPlot(self):
+        CC_array = []
+        lambda_array = []
+        DR_array = []
 
-def print_critical_point():
-    cidx = numpy.array(lambda_array).argmax()
-    print('lambda_critical = {0}'.format(lambda_array[cidx]))
-    print('c_critical = {0}'.format(CC_array[cidx]))
-    print('Re = {0}'.format(Re))
+        c_step = (self.c_right_bound - self.c_left_bound) / (self.c_points_count - 1)
+        self.V = Decimal(4.0) * self.Q / (Decimal(numpy.pi) * self.d * self.d)
+        self.Re = self.V * self.d / self.v_n
+        self.beta = 0
 
-    for i in range(len(lambda_array)):
-        if lambda_array[i] < lambda_array[0]:
-            print('first lambda = {0}'.format(lambda_array[0]))
-            print('first concentration with lambda less then start_lambda = {0}'.format(CC_array[i]))
-            return
+        lambda_0 = self.bin_search_lambda()
 
-    print('there is no lambda less then start_lambda')
+        for c_p in numpy.arange(self.c_left_bound, self.c_right_bound + c_step, c_step):
+            # print(c_p / inputFields['v_n'].coeffSI)
+            c_n = Decimal(1) - c_p
+            
+            # пересчет вязкости раствора при по формуле Вальтера
+            K = Decimal(0.8)
+            sum = c_n * log10(log10(K + self.v_n / inputFields['v_n'].coeffSI)) + c_p * log10(log10(K + self.v_p / inputFields['v_p'].coeffSI))
+            v_r = power(Decimal(10), power(Decimal(10), sum)) - K
+            v_r = v_r * inputFields['v_n'].coeffSI
+
+            # if (c_p > 1e-8):
+            #     nu = (v_r - self.v_n) / (self.v_n * c_p)
+            #     tay = Decimal(8.31 * 293) / Decimal(1e6) / nu / Decimal(1000)
+            #     print(tay / inputFields['v_n'].coeffSI)
+
+            # число Рейнольдса
+            self.Re = self.V * self.d / v_r
+            self.beta = self.concentration_coefficient * c_p * Decimal(100) # умножаем на 100, т.к. в формуле СС в процентах
+
+            CC_array.append(c_p / inputFields['v_n'].coeffSI)
+            lambda_array.append(self.bin_search_lambda())
+            DR_array.append(100 * (1 - lambda_array[-1] / lambda_0))
+
+        fig, ax1 = plt.subplots()
+        ax1.plot(CC_array, lambda_array, 'b')
+        ax1.set_xlabel('Объемная концентрация полимера, ppm')
+        ax1.set_ylabel('Коэффициент трения', color='b')
+        ax1.tick_params('y', colors='b')
+
+        ax2 = ax1.twinx()
+        ax2.plot(CC_array, DR_array, 'r')
+        ax2.set_ylabel('Гидравлическая эффективность присадки, %', color='r')
+        ax2.tick_params('y', colors='r')
+
+        fig.tight_layout()
+        plt.show()
 
 class Example(QWidget):
 
     def __init__(self):
         super().__init__()
 
+        self.edits = {}
+        self.currentY = 0
         self.initUI()
 
+    def addLabelEditWidget(self, name):
+        label = QLabel(self)
+        label.setText(inputFields[name].text)
+        label.setFont(QFont("Times", 9))
+
+        edit = QLineEdit(self)
+        self.edits[name] = edit
+
+        self.layout().addWidget(label, self.currentY, 0)
+        self.layout().addWidget(edit, self.currentY, 1)
+        self.currentY += 1
+
+    def addBlockCaption(self, text):
+        label = QLabel(self)
+        label.setText(text)
+        label.setFont(QFont("Times", 13, QFont.Bold))
+
+        self.layout().addWidget(label, self.currentY, 0)
+        self.currentY += 1
+
+    def addFormula(self, formula, _fontsize, _x, _horizonalalignment, _verticalalignment):
+        bg = self.palette().window().color()
+        cl = (bg.redF(), bg.greenF(), bg.blueF())
+        fig = Figure(edgecolor=cl, facecolor=cl)
+
+        canvas = FigureCanvasQTAgg(fig)        
+        self.layout().addWidget(canvas, self.currentY, 0, self.currentY, 0)
+        self.currentY += 1
+
+        fig.clear()
+        fig.suptitle(
+            formula,
+            fontsize = _fontsize,
+            x=_x,
+            horizontalalignment=_horizonalalignment,
+            verticalalignment=_verticalalignment)
+        canvas.draw()
+
+    def addDescription(self):
+        main_formula = (
+            r'$\dfrac{1}{\lambda} = '
+            r'-2 \log_{10}  \left[ \left( \frac{2.8\ V_{пор}^*}{V \sqrt{\lambda}} \right) ^ {\beta\ /\ 5.75}'
+            r'\left( \frac{2.51}{Re \sqrt{\lambda}} + \frac{\Delta_э}{3.7 d} \right) \right]$'
+        )
+        
+        self.addFormula(main_formula, 14, 0.5, 'center', 'top')
+
+        legend_formula = (
+            r'$\lambda$ - коэффициент трения'
+            '\n'
+            r'$V_{пор}^*$ - пороговая динамическая скорость'
+            '\n'
+            r'$V$ - средняя скорость движения жидкости в трубопроводе'
+            '\n'
+            r'$Re$ - число Рейнольдса'
+            '\n'
+            r'$d$ - диаметр трубопровода'
+            '\n'
+            r'$\Delta_э$ - шероховатость трубопровода'
+            '\n'
+            r'$\beta = Z * C$, где C - объемная концентрация присадки'
+        )
+
+        self.addFormula(legend_formula, 11, 0, 'left', 'top')
 
     def initUI(self):
 
-        # Labels
+        grid = QGridLayout(self)
+        grid.setSpacing(4)
+        grid.setRowMinimumHeight(0, 60)
+        grid.setRowMinimumHeight(1, 170)
 
-        leftX = 15
+        self.setLayout(grid)
+        self.addDescription()
 
-        self.lbl1 = QLabel(self)
-        self.lbl1.setText("Эпсилон, м")
-        self.lbl1.move(leftX, 44)
+        self.addBlockCaption('Параметры трубопровода')
+        self.addLabelEditWidget('Epsilon')
+        self.addLabelEditWidget('Q')
+        self.addLabelEditWidget('d')
+        self.addLabelEditWidget('v_n')
 
-        self.lbl2 = QLabel(self)
-        self.lbl2.setText("Объемная скорость потока, м^3 / c")
-        self.lbl2.move(leftX, 64)
+        self.currentY += 1
 
-        self.lbl3 = QLabel(self)
-        self.lbl3.setText("Диаметр трубы, м")
-        self.lbl3.move(leftX, 84)
+        self.addBlockCaption('Параметры присадки')
+        self.addLabelEditWidget('v_p')
+        self.addLabelEditWidget('V_por')
+        self.addLabelEditWidget('concentration_coefficient')
 
-        self.lbl4 = QLabel(self)
-        self.lbl4.setText("Вязкость полимера, м^2 / с")
-        self.lbl4.move(leftX, 104)
+        self.currentY += 1
 
-        self.lbl5 = QLabel(self)
-        self.lbl5.setText("Вязкость нефти, м^2 / с")
-        self.lbl5.move(leftX, 124)
+        self.addBlockCaption('Параметры графика')
+        self.addLabelEditWidget('c_left_bound')
+        self.addLabelEditWidget('c_right_bound')
+        self.addLabelEditWidget('c_points_count')
 
-        self.lbl6 = QLabel(self)
-        self.lbl6.setText("Пороговая скорость, м / с")
-        self.lbl6.move(leftX, 144)
+        # # Initial values
 
-        self.lbl7 = QLabel(self)
-        self.lbl7.setText("Начальное концентрация")
-        self.lbl7.move(leftX, 164)
+        self.edits['Epsilon'].setText('0.1')
+        self.edits['Q'].setText('1.425')
+        self.edits['d'].setText('1067')
+        self.edits['v_n'].setText('12.2')
 
-        self.lbl8 = QLabel(self)
-        self.lbl8.setText("Конечная концентрация")
-        self.lbl8.move(leftX, 184)
+        self.edits['v_p'].setText('1700')
+        self.edits['V_por'].setText('0.05')
+        self.edits['concentration_coefficient'].setText('5000')
 
-        self.lbl9 = QLabel(self)
-        self.lbl9.setText("Шаг изменения концентрация")
-        self.lbl9.move(leftX, 204)
+        self.edits['c_left_bound'].setText('0')
+        self.edits['c_right_bound'].setText('150')
+        self.edits['c_points_count'].setText('30')
 
-        self.lbl3 = QLabel(self)
-        self.lbl3.setText("*Точность нахождения лямбды*")
-        self.lbl3.move(leftX, 224)
+        # # Buttons
 
-        # Input dialog
-
-        rightX = 210
-
-        self.leEpsilon = QLineEdit(self)
-        self.leEpsilon.move(rightX, 42)
-        self.leEpsilon.setText('0.0001')
-
-        self.leQ = QLineEdit(self)
-        self.leQ.move(rightX, 62)
-        self.leQ.setText('1.425')
-
-        self.led = QLineEdit(self)
-        self.led.move(rightX, 82)
-        self.led.setText('1.067')
-
-        self.lev_p = QLineEdit(self)
-        self.lev_p.move(rightX, 102)
-        self.lev_p.setText('0.0017')
-
-        self.lev_n0 = QLineEdit(self)
-        self.lev_n0.move(rightX, 122)
-        self.lev_n0.setText('0.0000125')
-
-        self.leV_por = QLineEdit(self)
-        self.leV_por.move(rightX, 142)
-        self.leV_por.setText('0.05')
-
-        self.leC_LEFT_BOUND = QLineEdit(self)
-        self.leC_LEFT_BOUND.move(rightX, 162)
-        self.leC_LEFT_BOUND.setText('0.0')
-
-        self.leC_RIGHT_BOUND = QLineEdit(self)
-        self.leC_RIGHT_BOUND.move(rightX, 182)
-        self.leC_RIGHT_BOUND.setText('0.012')
-
-        self.leC_STEP = QLineEdit(self)
-        self.leC_STEP.move(rightX, 202)
-        self.leC_STEP.setText('0.0001')
-
-        self.leLAMBDA_STEP = QLineEdit(self)
-        self.leLAMBDA_STEP.move(rightX, 222)
-        self.leLAMBDA_STEP.setText('0.001')
-
-        # Buttons
-
-        self.btn = QPushButton('Построить график', self)
-        self.btn.move(150, 250)
-        self.btn.clicked.connect(self.showDialog)
+        btn = QPushButton('Построить график', self)
+        btn.clicked.connect(self.showDialog)
+        self.layout().addWidget(btn, self.currentY, 0, self.currentY, 0)
 
         self.setWindowTitle('Применение противотурбулентных присадок')
-        self.resize(400, 300)
-        self.center()
+        self.resize(510, 400)
         self.show()
+        self.center()
 
-    def exception(self):
-        self.msg = QMessageBox.about(self, "Warning", "Wrong data")
+    def exception(self, text):
+        self.msg = QMessageBox.about(self, "Ошибка", text)
 
     def showDialog(self):
-
-        global eps, Q, d, v_n0, v_p, V_por
-        global C_LEFT_BOUND, C_RIGHT_BOUND, C_STEP
-        global LAMBDA_STEP, CC, v_n, Re
-
         try:
+            eq = Equation()
+            for key in inputFields.keys():
+                eq.setData(key, self.edits[key].text())
 
-            # set data
+            eq.showPlot()
 
-            eps = Decimal(self.leEpsilon.text())
-            Q = Decimal(self.leQ.text())
-            d = Decimal(self.led.text())
-            v_n0 = Decimal(self.lev_n0.text())
-            v_p = Decimal(self.lev_p.text())
-            V_por = Decimal(self.leV_por.text())
-            C_LEFT_BOUND = Decimal(self.leC_LEFT_BOUND.text())
-            C_RIGHT_BOUND = Decimal(self.leC_RIGHT_BOUND.text())
-            C_STEP = Decimal(self.leC_STEP.text())
-            LAMBDA_STEP = Decimal(self.leLAMBDA_STEP.text())
-            CC = C_STEP
-            v_n = v_n0
-            # средняя скорость движения жидкости в трубе, м / с
-            V = Decimal(4.0) * Q / (Decimal(numpy.pi) * d * d)
-            # число Рейндольса, безразмерное
-            Re = V * d / v_n
-
-            # run main function
-
-            main()
-
-        except InvalidOperation:
-            self.exception()
+        except Exception as e:
+            #self.exception(e)
+            self.exception(str(e))
 
     def center(self):
         qr = self.frameGeometry()
