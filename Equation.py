@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from PyQt5.QtWidgets import *
 from PyQt5.QtGui import QFont
+from PyQt5 import QtCore
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib import pyplot as plt
@@ -38,28 +39,8 @@ inputFields = {
     'c_right_bound' : InputField('Конечная концентрация, ppm', 1e-6, 0, 350),
     'c_points_count' : InputField('Количество точек построения', 1.0, 3, 1000),
 
-    'concentration_coefficient' : InputField('Коэффициент Z', 1.0, 0, 2e5),
+    'concentration_coefficient' : InputField('Коэффициент Z', 1.0, 1, 2e5),
 }
-
-def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█'):
-    """
-    Call in a loop to create terminal progress bar
-    @params:
-        iteration   - Required  : current iteration (Int)
-        total       - Required  : total iterations (Int)
-        prefix      - Optional  : prefix string (Str)
-        suffix      - Optional  : suffix string (Str)
-        decimals    - Optional  : positive number of decimals in percent complete (Int)
-        length      - Optional  : character length of bar (Int)
-        fill        - Optional  : bar fill character (Str)
-    """
-    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
-    filledLength = int(length * iteration // total)
-    bar = fill * filledLength + '-' * (length - filledLength)
-    print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end = '\r')
-    # Print New Line on Complete
-    if iteration == total: 
-        print()
 
 class Equation:
 
@@ -113,6 +94,8 @@ class Equation:
             raise Exception('Значение в поле "{0}" должно лежать в пределах от {1} до {2}'.format(field.text, field.left_bound, field.right_bound))
 
     def left_log(self, x):
+        if self.concentration_coefficient < Decimal(1e-10):
+            return Decimal(1)
         x = Decimal(x)
         base = (Decimal(2.8) * self.V_por) / (self.V * Decimal(sqrt(x)))
         p = self.beta / Decimal(5.75)
@@ -160,7 +143,7 @@ class Equation:
 
         return L
 
-    def showPlot(self):
+    def showPlot(self, progressBar):
         CC_array = []
         lambda_array = []
         DR_array = []
@@ -171,12 +154,15 @@ class Equation:
         self.beta = 0
 
         lambda_0 = self.bin_search_lambda()
-        it = 0
-        os.system('cls')
 
-        for c_p in numpy.arange(self.c_left_bound, self.c_right_bound + c_step, c_step):
-            printProgressBar(it, self.c_points_count - 1, prefix = 'Progress:', suffix = 'Complete', length = 50)
-            it += 1
+        progressBar.setRange(0, int(self.c_points_count))
+
+        for iteration in range(0, int(self.c_points_count) + 1):
+            if progressBar.wasCanceled():
+                return
+            progressBar.setValue(iteration)
+
+            c_p = c_step * Decimal(iteration)
             c_n = Decimal(1) - c_p
 
             # пересчет вязкости раствора при по формуле Вальтера
@@ -187,8 +173,8 @@ class Equation:
 
             # if (c_p > 1e-8):
             #     nu = (v_r - self.v_n) / (self.v_n * c_p)
-            #     tay = Decimal(8.31 * 293) / Decimal(1e6) / nu / Decimal(1000)
-            #     print(tay / inputFields['v_n'].coeffSI)
+            #     tay = Decimal(8.31 * 293) / Decimal(1e6) / nu
+            #     print(sqrt(tay / Decimal(1000)))
 
             # число Рейнольдса
             self.Re = self.V * self.d / v_r
@@ -326,7 +312,7 @@ class Example(QWidget):
         self.edits['v_n'].setText('12.2')
 
         self.edits['v_p'].setText('1700')
-        self.edits['V_por'].setText('0.001')
+        self.edits['V_por'].setText('0.03')
         self.edits['concentration_coefficient'].setText('3000')
 
         self.edits['c_left_bound'].setText('0')
@@ -353,10 +339,17 @@ class Example(QWidget):
             for key in inputFields.keys():
                 eq.setData(key, self.edits[key].text())
 
-            eq.showPlot()
+            progressBar = QProgressDialog('Построение графика', 'Отменить', 0, 0, self) 
+            progressBar.setWindowTitle('Ожидание')
+            progressBar.setWindowModality(QtCore.Qt.WindowModal)
+            progressBar.canceled.connect(progressBar.close)
+            progressBar.setMinimumDuration(100)
+
+            progressBar.show()
+            eq.showPlot(progressBar)
+            progressBar.hide()
 
         except Exception as e:
-            #self.exception(e)
             self.exception(str(e))
 
     def center(self):
@@ -366,6 +359,7 @@ class Example(QWidget):
         self.move(qr.topLeft())
 
 if __name__ == '__main__':
+    QApplication.processEvents() 
     app = QApplication(sys.argv)
     ex = Example()
     sys.exit(app.exec_())
