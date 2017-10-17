@@ -2,6 +2,7 @@
 from matplotlib import use as matplotlib_use
 matplotlib_use("QT5Agg")
 
+import os
 import sys
 import numpy
 import decimal
@@ -27,18 +28,38 @@ class InputField:
 inputFields = {
     'Epsilon' : InputField('Шероховатость трубопровода, мм', 1e-3, 0.001, 10),
     'Q' : InputField('Объемная скорость потока, м^3 / c', 1.0, 0.001, 1000),
-    'd' : InputField('Диаметр трубы, мм', 1e-3, 1, 2000),
+    'd' : InputField('Диаметр трубопровода, мм', 1e-3, 1, 2000),
     'v_n' : InputField('Вязкость нефти, сСт', 1e-6),
 
     'v_p' : InputField('Вязкость присадки, сСт', 1e-6),
-    'V_por' : InputField('Пороговая скорость, м / с', 1.0, 0.001, 0.3),
+    'V_por' : InputField('Пороговая скорость, м / с', 1.0, 0.0001, 0.3),
 
     'c_left_bound' : InputField('Начальная концентрация, ppm', 1e-6, 0, 350),
     'c_right_bound' : InputField('Конечная концентрация, ppm', 1e-6, 0, 350),
     'c_points_count' : InputField('Количество точек построения', 1.0, 3, 1000),
 
-    'concentration_coefficient' : InputField('Коэффициент Z', 1.0, 0.0, 2e5),
+    'concentration_coefficient' : InputField('Коэффициент Z', 1.0, 0, 2e5),
 }
+
+def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█'):
+    """
+    Call in a loop to create terminal progress bar
+    @params:
+        iteration   - Required  : current iteration (Int)
+        total       - Required  : total iterations (Int)
+        prefix      - Optional  : prefix string (Str)
+        suffix      - Optional  : suffix string (Str)
+        decimals    - Optional  : positive number of decimals in percent complete (Int)
+        length      - Optional  : character length of bar (Int)
+        fill        - Optional  : bar fill character (Str)
+    """
+    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+    filledLength = int(length * iteration // total)
+    bar = fill * filledLength + '-' * (length - filledLength)
+    print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end = '\r')
+    # Print New Line on Complete
+    if iteration == total: 
+        print()
 
 class Equation:
 
@@ -150,11 +171,14 @@ class Equation:
         self.beta = 0
 
         lambda_0 = self.bin_search_lambda()
+        it = 0
+        os.system('cls')
 
         for c_p in numpy.arange(self.c_left_bound, self.c_right_bound + c_step, c_step):
-            # print(c_p / inputFields['v_n'].coeffSI)
+            printProgressBar(it, self.c_points_count - 1, prefix = 'Progress:', suffix = 'Complete', length = 50)
+            it += 1
             c_n = Decimal(1) - c_p
-            
+
             # пересчет вязкости раствора при по формуле Вальтера
             K = Decimal(0.8)
             sum = c_n * log10(log10(K + self.v_n / inputFields['v_n'].coeffSI)) + c_p * log10(log10(K + self.v_p / inputFields['v_p'].coeffSI))
@@ -185,8 +209,10 @@ class Equation:
         ax2.set_ylabel('Гидравлическая эффективность присадки, %', color='r')
         ax2.tick_params('y', colors='r')
 
+        ax2.grid(True)
+
         fig.tight_layout()
-        plt.show()
+        plt.show(block=False)
 
 class Example(QWidget):
 
@@ -300,8 +326,8 @@ class Example(QWidget):
         self.edits['v_n'].setText('12.2')
 
         self.edits['v_p'].setText('1700')
-        self.edits['V_por'].setText('0.05')
-        self.edits['concentration_coefficient'].setText('5000')
+        self.edits['V_por'].setText('0.001')
+        self.edits['concentration_coefficient'].setText('3000')
 
         self.edits['c_left_bound'].setText('0')
         self.edits['c_right_bound'].setText('150')
@@ -340,7 +366,6 @@ class Example(QWidget):
         self.move(qr.topLeft())
 
 if __name__ == '__main__':
-
     app = QApplication(sys.argv)
     ex = Example()
     sys.exit(app.exec_())
